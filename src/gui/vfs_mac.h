@@ -46,16 +46,6 @@ namespace OCC
 
 class InternalVfsMac;
 
-struct FuseData
-{
-    void *_buf;
-    fuse_fill_dir_t _filler;
-    FuseData(void *buf = nullptr, fuse_fill_dir_t filler = nullptr)
-        : _buf(buf)
-        , _filler(filler)
-    {
-    }
-};
 /*!
  * class
  * discussion This class controls the life cycle of a user space file system.
@@ -83,7 +73,6 @@ private:
     qint64 totalQuota_;
     QMap<QString, OCC::DiscoveryDirectoryResult*> _fileListMap;
     QPointer<OCC::DiscoveryFolderFileList> _remotefileListJob;
-    QMap<QString, FuseData *> _fuseDataList;
     
     QPointer<OCC::AccountState> accountState_;
 #pragma mark Fuse operations.
@@ -522,15 +511,10 @@ public:
     bool removeExtendedAttribute(QString name, QString path, QVariantMap &error);
 
     /*!
-     * abstract Emit startRemoteFileListJob signal
+     * abstract Sync
      */
-    void startGetRemoteFileListJob(QString path);
+    void sync(QString path);
 
-    /*!
-     * abstract Store fuse data
-     */
-    void setFuseData(QString path, void *buf, fuse_fill_dir_t filler);
-    
     //~VfsMac();
     
     bool enableAllocate();

@@ -32,6 +32,8 @@
 
 #include <sys/ioctl.h>
 
+#include "syncwrapper.h"
+
 class InternalVfsMac : public QObject
 {
 private:
@@ -558,33 +560,15 @@ QString VfsMac::destinationOfSymbolicLinkAtPath(QString path, QVariantMap &error
 
 #pragma mark Directory Contents
 
-void VfsMac::setFuseData(QString path, void *buf, fuse_fill_dir_t filler){
-    _fuseDataList.insert(path, new FuseData(buf, filler));
-}
-
 void VfsMac::folderFileListFinish(OCC::DiscoveryDirectoryResult *dr)
 {
     if(dr)
     {
         QString ruta = dr->path;
         _fileListMap.insert(dr->path, dr);
-
-//        QVariantMap error;
-//        QStringList *contents = contentsOfDirectoryAtPath(dr->path, error);
-//        if(_fuseDataList.contains(dr->path)){
-//            FuseData *fuseData = _fuseDataList.value(dr->path);
-//            for (int i = 0, count = contents->length(); i < count; i++){
-//                fuseData->_filler(fuseData->_buf, contents->at(i).toLatin1().data(), NULL, 0);
-//            }
-//            //_fuseDataList.remove(dr->path);
-//        }
     }
     else
         qDebug() << "Error al obtener los resultados, viene nulo";
-}
-
-void VfsMac::startGetRemoteFileListJob(QString path){
-    emit startRemoteFileListJob(path);
 }
 
 QStringList *VfsMac::contentsOfDirectoryAtPath(QString path, QVariantMap &error)
@@ -603,14 +587,15 @@ QStringList *VfsMac::contentsOfDirectoryAtPath(QString path, QVariantMap &error)
     }
     
     FileManager fm;
+    QStringList *contents = new QStringList();
     if(!_fileListMap.value(path)->list.empty())
     {
         for(unsigned long i=0; i <_fileListMap.value(path)->list.size(); i++)
         {
             QString completePath = rootPath_ + (path.endsWith("/")?path:(path+"/")) + QString::fromLatin1(_fileListMap.value(path)->list.at(i)->path);
+            contents->append(_fileListMap.value(path)->list.at(i)->path);
             QFileInfo fi(completePath);
-            if (!fi.exists())
-            {
+            if (!fi.exists()){
                 if(_fileListMap.value(path)->list.at(i)->type == ItemTypeDirectory)
                 {
                     unsigned long perm = 16877 & ALLPERMS;
@@ -628,7 +613,6 @@ QStringList *VfsMac::contentsOfDirectoryAtPath(QString path, QVariantMap &error)
                     close(fd.toInt());
                 }
             }
-    //        qDebug() << Q_FUNC_INFO << "results: " << r->name << r->type;
         }
     }
     //_fileListMap.remove(path);
@@ -638,11 +622,30 @@ QStringList *VfsMac::contentsOfDirectoryAtPath(QString path, QVariantMap &error)
 
 #pragma mark File Contents
 
+void VfsMac::sync(QString path){
+    OCC::SyncWrapper::instance()->updateSyncQueue(path, false);
+    OCC::SyncWrapper::instance()->sync(path);
+
+    // if status is false, dowload didn't finish
+    while(OCC::SyncWrapper::instance()->syncing(path)){
+        qDebug() << Q_FUNC_INFO << "Trying to download file..." << path;
+        qDebug() << Q_FUNC_INFO << "Syncing status..." << OCC::SyncWrapper::instance()->syncing(path);
+    }
+
+    OCC::SyncWrapper::instance()->updateLastAccess(path);
+}
+
 bool VfsMac::openFileAtPath(QString path, int mode, QVariant &userData, QVariantMap &error)
 {
+    // if SyncMode is NONE then open file was not triggered by the user
+    if(!OCC::SyncWrapper::instance()->shouldSync(path)){
+        OCC::SyncWrapper::instance()->initSyncMode(path);
+        return true;
+    }
+
     //Sync.
-    
-    
+    sync(path);
+
     QString p = rootPath_ + path;
     int fd = open(p.toLatin1().data(), mode);
     if ( fd < 0 ) {
@@ -1145,12 +1148,7 @@ static int fusefm_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     try
     {
         VfsMac* fs = VfsMac::currentFS();
-//        fs->startGetRemoteFileListJob(QString::fromLatin1(path));
-//        fs->setFuseData(path, buf, filler);
-//        ret = 0;
-
-        QStringList *contents =
-        fs->contentsOfDirectoryAtPath(QString::fromLatin1(path), error);
+        QStringList *contents = fs->contentsOfDirectoryAtPath(QString::fromLatin1(path), error);
         if (contents)
         {
             ret = 0;
@@ -1171,6 +1169,7 @@ static int fusefm_open(const char *path, struct fuse_file_info* fi) {
         QVariant userData;
         QVariantMap error;
         VfsMac* fs = VfsMac::currentFS();
+
         if (fs->openFileAtPath(QString::fromLatin1(path), fi->flags, userData, error))
         {
             ret = 0;
@@ -1180,8 +1179,7 @@ static int fusefm_open(const char *path, struct fuse_file_info* fi) {
         else
             MAYBE_USE_ERROR(ret, error);
     }
-    catch (QException exception) { }
-    return ret;
+    catch (QException exception) { } return ret;
 }
 
 static int fusefm_release(const char *path, struct fuse_file_info* fi)

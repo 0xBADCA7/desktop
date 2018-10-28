@@ -304,6 +304,12 @@ public:
         // Nothing to do if the file is Offline
         if(SyncJournalDb::instance()->getSyncMode(item->_file) == SyncJournalDb::SyncMode::SYNCMODE_ONLINE){
             _subJobs.appendTask(item);
+
+        } else {
+
+            // notify this file won't be synced - false to stop
+            SyncJournalDb::instance()->emitSyncStatusChanged(item->_file, false);
+
         }
     }
 
@@ -521,8 +527,9 @@ private slots:
     /** Emit the finished signal and make sure it is only emitted once */
     void emitFinished(SyncFileItem::Status status)
     {
-        if (!_finishedEmited)
+        if (!_finishedEmited){
             emit finished(status == SyncFileItem::Success);
+        }
         _finishedEmited = true;
     }
 

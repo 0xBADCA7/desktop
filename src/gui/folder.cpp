@@ -611,8 +611,6 @@ bool Folder::reloadExcludes()
 
 void Folder::startSync(const QStringList &pathList)
 {
-    Q_UNUSED(pathList)
-
     if (isBusy()) {
         qCCritical(lcFolder) << "ERROR csync is still running and new sync requested.";
         return;
@@ -647,7 +645,17 @@ void Folder::startSync(const QStringList &pathList)
     }();
     if (_folderWatcher && _folderWatcher->isReliable() && _timeSinceLastFullLocalDiscovery.isValid()
         && (fullLocalDiscoveryInterval.count() < 0
-               || _timeSinceLastFullLocalDiscovery.hasExpired(fullLocalDiscoveryInterval.count()))) {
+               || _timeSinceLastFullLocalDiscovery.hasExpired(fullLocalDiscoveryInterval.count()) ||
+            !pathList.isEmpty())) {
+
+        if(!pathList.isEmpty()){
+            _localDiscoveryPaths.clear();
+            foreach(QString path, pathList){
+                qCInfo(lcFolder) << "local discovery: inserted" << path << "due to FUSE.";
+                _localDiscoveryPaths.insert(path.toUtf8());
+            }
+        }
+
         qCInfo(lcFolder) << "Allowing local discovery to read from the database";
         _engine->setLocalDiscoveryOptions(LocalDiscoveryStyle::DatabaseAndFilesystem, _localDiscoveryPaths);
 
@@ -812,6 +820,7 @@ void Folder::slotSyncFinished(bool success)
         if (_engine->lastLocalDiscoveryStyle() == LocalDiscoveryStyle::FilesystemOnly) {
             _timeSinceLastFullLocalDiscovery.start();
         }
+
         qCDebug(lcFolder) << "Sync success, forgetting last sync's local discovery path list";
     } else {
         // On overall-failure we can't forget about last sync's local discovery
@@ -914,6 +923,9 @@ void Folder::slotItemCompleted(const SyncFileItemPtr &item)
         _localDiscoveryPaths.insert(item->_file.toUtf8());
         qCDebug(lcFolder) << "local discovery: inserted" << item->_file << "due to sync failure";
     }
+
+    // notify this file 'got' synced - true to stop
+    SyncJournalDb::instance()->syncStatusChanged(item->_file, true);
 
     _syncResult.processCompletedItem(item);
 
